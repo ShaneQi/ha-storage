@@ -1,0 +1,117 @@
+blueprint:
+  name: Motion lights — bright, then dim, then off
+  description: >
+    On motion, turn lights on at full brightness. When motion clears, keep
+    that brightness until near the end of the wait, then dim (default 50%)
+    for the last 10 seconds before turning off. New motion during the wait
+    cancels the timer and goes back to full brightness.
+  domain: automation
+  author: cursor-ha
+  input:
+    motion_sensor:
+      name: Motion sensor
+      description: Binary sensor that goes on when motion is detected.
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+              device_class:
+                - motion
+                - occupancy
+    lights:
+      name: Lights
+      description: One or more lights to control.
+      selector:
+        target:
+          entity:
+            - domain: light
+    active_brightness:
+      name: Brightness while motion is active
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+          mode: slider
+    clear_brightness:
+      name: Brightness just before off
+      description: Level used for the final warning window before lights turn off.
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+          mode: slider
+    off_wait:
+      name: Wait after clear before turning off
+      description: >
+        How long motion must stay clear before lights turn off. Lights stay at
+        active brightness for most of this time, then dim for the warning window.
+      default: 180
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds
+          mode: box
+    dim_lead:
+      name: Dim warning window
+      description: How many seconds before off to drop to the warning brightness.
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 600
+          unit_of_measurement: seconds
+          mode: box
+
+mode: restart
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input motion_sensor
+    to: "on"
+    id: motion
+  - trigger: state
+    entity_id: !input motion_sensor
+    to: "off"
+    id: clear
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: motion
+        sequence:
+          - action: light.turn_on
+            target: !input lights
+            data:
+              brightness_pct: !input active_brightness
+      - conditions:
+          - condition: trigger
+            id: clear
+        sequence:
+          - variables:
+              off_wait: !input off_wait
+              dim_lead: !input dim_lead
+              warn_seconds: "{{ [off_wait | int, dim_lead | int] | min }}"
+              pre_dim_seconds: "{{ [0, (off_wait | int) - (warn_seconds | int)] | max }}"
+          - delay:
+              seconds: "{{ pre_dim_seconds | int }}"
+          - condition: state
+            entity_id: !input motion_sensor
+            state: "off"
+          - action: light.turn_on
+            target: !input lights
+            data:
+              brightness_pct: !input clear_brightness
+          - delay:
+              seconds: "{{ warn_seconds | int }}"
+          - condition: state
+            entity_id: !input motion_sensor
+            state: "off"
+          - action: light.turn_off
+            target: !input lights
